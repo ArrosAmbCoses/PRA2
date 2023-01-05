@@ -1,0 +1,88 @@
+---
+title: 'PRA2: Com realitzar la neteja i l''anàlisi de dades?'
+author: "Àlex Franco Granell; Roger Esteban Fabró"
+date: "Gener 2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Descripció del dataset
+
+Hem escollit investigar quins factors, patrons de conducta o situació ambiental influència més a la incidència de càncer. Per fer aquest anàlisi s'ha escollit tres datasets amb dades dels Estats Units que mostren la mortalitat per estat, i diversos paràmetres demogràfics. Concretament utilitzem els datasets de ["Cancer Mortality & Incidence Rates: (Country LVL)"](https://www.kaggle.com/datasets/thedevastator/us-county-level-cancer-mortality-and-incidence-r?resource=download&select=death+.csv), les dades dels EUA de ["Demographics & observation for pandemic escalation"](https://www.kaggle.com/code/aestheteaman01/demographics-observation-for-pandemic-escalation/data?select=us-county.csv), i un dataset [d'usafacts.org](https://static.usafacts.org/public/data/covid-19/covid_county_population_usafacts.csv?_ga=2.202830163.395284796.1672845391-1680078968.1672845391) que recull la població dels diversos estats del país. Els dos primers disponibles a kaggle.
+
+
+# Integració i selecció de dades
+
+```{r include=FALSE}
+# Llibreries
+if(!require(dplyr)){
+    install.packages("dplyr")
+    library(dplyr)
+}
+if(!require(tidyr)){
+    install.packages("tidyr")
+    library(tidyr)
+}
+
+## 1.Càrrega dels csv originals:
+dpoblacio <- read.csv('./CSVs Originals/covid_county_population_usafacts.csv', sep=',')
+dcancerdeath <- read.csv('./CSVs Originals/death.csv', sep=',')
+dusparam <- read.csv('./CSVs Originals/us-county.csv', sep=',')
+
+
+## 2.Agregació de les dades per estats
+# 2.1
+dpoblacio <- aggregate( population ~ State, dpoblacio, sum )
+
+# 2.2
+dusparam <- aggregate( dusparam[, 4:15], by = list(dusparam$state), mean ) ### ROGER els NA del dataset resulten en molts més NA dels que hi ha quan es fa l'agregació. Es podrien eliminar els county amb NA per fer la mitjana, o imputar la mitjana estatal en aquests valors. També es podria imputar la mitjana nacional a l'estatal una vegada agregat. Com en principi l'estudi dels NA et tocarà a tu, t'ho deixe programat de moment per fer l'agregació. Jo imputaria la mitjana dels estats, i després faria l'agregació, però ho deixe a la teua elecció.
+
+dcancerdeathUS <- dcancerdeath[1,] # És el valor d'EUA nacional
+dcancerdeath <- dcancerdeath[-1,] # Cal separar-lo perquè tenim dades estatals, no nacionals
+############################################################### Jo no guardava aquesta variable, després podem fer una mitjana de el dfBase i ja tindriem la mitjana nacional de tots els paràmetres. De moment el deixe ###############################################
+# 2.3
+# Separar els county dels estats
+dcancerdeath <- dcancerdeath %>% separate(County,c("County","State"),sep=",")
+
+# R interpreta les columnes com caràcters, els passe a numèric. 
+###################################################Hi ha un valor que s'hauria de discretitzar si cal introduïr-lo: "Recent.Trend..2."#######################################################
+cols.num <- c("Age.Adjusted.Death.Rate", "Lower.95..Confidence.Interval.for.Death.Rate", 
+              "Upper.95..Confidence.Interval.for.Death.Rate", "Average.Deaths.per.Year",
+              "Recent.5.Year.Trend..2..in.Death.Rates", "Lower.95..Confidence.Interval.for.Trend",
+              "Upper.95..Confidence.Interval.for.Trend")
+dcancerdeath[cols.num] <- sapply(dcancerdeath[cols.num],as.numeric)
+
+# Agregar les dades per estats
+dcancerdeath <- aggregate( dcancerdeath[, c(6,7,8,9,11,12,13)], by = list(dcancerdeath$State), mean ) ### Passa el mateix amb els NA
+
+
+## 3.Merge de les dades
+
+# Conversió dels noms 1
+dcancerdeath$Group.1 <- trimws(dcancerdeath$Group.1) # Elimine espais
+dcancerdeath$Group.1 <- state.abb[match(dcancerdeath$Group.1, state.name)] # Abrevie noms
+dcancerdeath$Group.1[is.na(dcancerdeath$Group.1)] <- "DC" # No el detecta, l'impute
+
+# Conversió dels noms 2
+dusparam$Group.1 <- state.abb[match(dusparam$Group.1, state.name)] # Abrevie noms
+dusparam$Group.1[is.na(dusparam$Group.1)] <- "DC" # No el detecta, l'impute
+
+
+# Merge dels datasets en un dataset final
+dfBase <- merge(dcancerdeath,dusparam,by = "Group.1")
+colnames(dfBase)[1]  <- "State" # Canvie el nom de la columna per poder fer el merge
+dfBase <- merge(dpoblacio,dfBase,by = "State")
+
+# neteja de variables
+remove(cols.num,dcancerdeath,dpoblacio,dusparam)
+```
+
+
+
+
+
+
+
