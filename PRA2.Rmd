@@ -9,76 +9,263 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Descripció del dataset
-
-Hem escollit investigar quins factors, patrons de conducta o situació ambiental influència més a la incidència de càncer. Per fer aquest anàlisi s'ha escollit tres datasets amb dades dels Estats Units que mostren la mortalitat per estat, i diversos paràmetres demogràfics. Concretament utilitzem els datasets de ["Cancer Mortality & Incidence Rates: (Country LVL)"](https://www.kaggle.com/datasets/thedevastator/us-county-level-cancer-mortality-and-incidence-r?resource=download&select=death+.csv), les dades dels EUA de ["Demographics & observation for pandemic escalation"](https://www.kaggle.com/code/aestheteaman01/demographics-observation-for-pandemic-escalation/data?select=us-county.csv), i un dataset [d'usafacts.org](https://static.usafacts.org/public/data/covid-19/covid_county_population_usafacts.csv?_ga=2.202830163.395284796.1672845391-1680078968.1672845391) que recull la població dels diversos estats del país. Els dos primers disponibles a kaggle.
-
-
-# Integració i selecció de dades
-
-```{r include=FALSE}
-# Llibreries
-if(!require(dplyr)){
-    install.packages("dplyr")
-    library(dplyr)
-}
-if(!require(tidyr)){
-    install.packages("tidyr")
-    library(tidyr)
-}
-
-## 1.Càrrega dels csv originals:
-dpoblacio <- read.csv('./CSVs Originals/covid_county_population_usafacts.csv', sep=',')
-dcancerdeath <- read.csv('./CSVs Originals/death.csv', sep=',')
-dusparam <- read.csv('./CSVs Originals/us-county.csv', sep=',')
-
-
-## 2.Agregació de les dades per estats
-# 2.1
-dpoblacio <- aggregate( population ~ State, dpoblacio, sum )
-
-# 2.2
-dusparam <- aggregate( dusparam[, 4:15], by = list(dusparam$state), mean ) ### ROGER els NA del dataset resulten en molts més NA dels que hi ha quan es fa l'agregació. Es podrien eliminar els county amb NA per fer la mitjana, o imputar la mitjana estatal en aquests valors. També es podria imputar la mitjana nacional a l'estatal una vegada agregat. Com en principi l'estudi dels NA et tocarà a tu, t'ho deixe programat de moment per fer l'agregació. Jo imputaria la mitjana dels estats, i després faria l'agregació, però ho deixe a la teua elecció.
-
-dcancerdeathUS <- dcancerdeath[1,] # És el valor d'EUA nacional
-dcancerdeath <- dcancerdeath[-1,] # Cal separar-lo perquè tenim dades estatals, no nacionals
-############################################################### Jo no guardava aquesta variable, després podem fer una mitjana de el dfBase i ja tindriem la mitjana nacional de tots els paràmetres. De moment el deixe ###############################################
-# 2.3
-# Separar els county dels estats
-dcancerdeath <- dcancerdeath %>% separate(County,c("County","State"),sep=",")
-
-# R interpreta les columnes com caràcters, els passe a numèric. 
-###################################################Hi ha un valor que s'hauria de discretitzar si cal introduïr-lo: "Recent.Trend..2."#######################################################
-cols.num <- c("Age.Adjusted.Death.Rate", "Lower.95..Confidence.Interval.for.Death.Rate", 
-              "Upper.95..Confidence.Interval.for.Death.Rate", "Average.Deaths.per.Year",
-              "Recent.5.Year.Trend..2..in.Death.Rates", "Lower.95..Confidence.Interval.for.Trend",
-              "Upper.95..Confidence.Interval.for.Trend")
-dcancerdeath[cols.num] <- sapply(dcancerdeath[cols.num],as.numeric)
-
-# Agregar les dades per estats
-dcancerdeath <- aggregate( dcancerdeath[, c(6,7,8,9,11,12,13)], by = list(dcancerdeath$State), mean ) ### Passa el mateix amb els NA
-
-
-## 3.Merge de les dades
-
-# Conversió dels noms 1
-dcancerdeath$Group.1 <- trimws(dcancerdeath$Group.1) # Elimine espais
-dcancerdeath$Group.1 <- state.abb[match(dcancerdeath$Group.1, state.name)] # Abrevie noms
-dcancerdeath$Group.1[is.na(dcancerdeath$Group.1)] <- "DC" # No el detecta, l'impute
-
-# Conversió dels noms 2
-dusparam$Group.1 <- state.abb[match(dusparam$Group.1, state.name)] # Abrevie noms
-dusparam$Group.1[is.na(dusparam$Group.1)] <- "DC" # No el detecta, l'impute
-
-
-# Merge dels datasets en un dataset final
-dfBase <- merge(dcancerdeath,dusparam,by = "Group.1")
-colnames(dfBase)[1]  <- "State" # Canvie el nom de la columna per poder fer el merge
-dfBase <- merge(dpoblacio,dfBase,by = "State")
-
-# neteja de variables
-remove(cols.num,dcancerdeath,dpoblacio,dusparam)
+```{r echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+# Carreguem els packages
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(tidyr)){install.packages("tidyr")}
+if(!require(stringr)){install.packages("stringr")}
+if(!require(VIM)){install.packages("VIM")}
+if(!require(ggplot2)){install.packages("ggplot2")}
+if(!require(devtools)){install.packages("devtools")}
+if(!require(ggbiplot)){devtools::install_github("vqv/ggbiplot")}
+if(!require(cowplot)){install.packages("cowplot")}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(VIM)
+library(ggplot2)
+library(devtools)
+library(ggbiplot)
+library(cowplot)
 ```
+
+
+# 1. Descripció del dataset
+
+Hem escollit investigar quins factors sociodemogràfics tenen un major impacte sobre la incidència de càncer als Estats Units. Per fer aquest anàlisi s'ha escollit tres datasets amb dades dels Estats Units que mostren la mortalitat per comtat, i diversos paràmetres demogràfics. Concretament utilitzem els datasets de ["Cancer Mortality & Incidence Rates: (Country LVL)"](https://www.kaggle.com/datasets/thedevastator/us-county-level-cancer-mortality-and-incidence-r?resource=download&select=death+.csv), les dades dels EUA de ["Demographics & observation for pandemic escalation"](https://www.kaggle.com/code/aestheteaman01/demographics-observation-for-pandemic-escalation/data?select=us-county.csv), i un dataset [d'usafacts.org](https://static.usafacts.org/public/data/covid-19/covid_county_population_usafacts.csv?_ga=2.202830163.395284796.1672845391-1680078968.1672845391) que recull la població dels diversos comtats del país. Els dos primers es troben disponibles a kaggle i contenen les dades bàsiques per als anàlisis fets posteriorment.
+
+
+# 2. Integració i selecció de dades
+
+
+A continuació, carreguem les dades originals i mostrem els primers registres per pantalla.
+
+```{r}
+dpoblacio <- read.csv('./CSVs Originals/covid_county_population_usafacts.csv', sep=',')
+head(dpoblacio)
+```
+
+
+```{r}
+dcancerdeath <- read.csv('./CSVs Originals/death.csv', sep=',')
+head(dcancerdeath)
+```
+
+
+```{r}
+dusparam <- read.csv('./CSVs Originals/us-county.csv', sep=',')
+head(dusparam)
+```
+
+
+A continuació modifiquem individualment els datasets per a la seva posterior integració.
+
+```{r}
+d1 <- dcancerdeath %>%
+  # Eliminem les dades a nivell estatal
+  filter(index != 0) %>%
+  # Generem les columnes County i State
+  separate(County, c("county","state"), sep=", ") %>%
+  # Seleccionem i modifiquem les variables d'interès
+  transmute(FIPS,
+            county = str_remove_all(county, " County"),
+            state,
+            met_obj_reduction = Met.Objective.of.45.5...1.,
+            age_adj_deathrate = Age.Adjusted.Death.Rate,
+            avg_deaths_year = Average.Deaths.per.Year,
+            trend_recent_deaths = Recent.Trend..2.,
+            trend_5y_deaths = Recent.5.Year.Trend..2..in.Death.Rates #,
+            )
+
+d2 <- dpoblacio %>%
+  # Seleccionem les columnes de l'ID del county i la població
+  transmute(FIPS = countyFIPS,
+            population) %>%
+  # Eliminem els registres a nivell estatal
+  filter(FIPS != 0)
+
+d3 <- dusparam %>%
+  transmute(FIPS = fips,
+            smokers = Smokers,
+            obesity = Obesity,
+            food_env_index = Food.Environment.index,
+            exercise = Exercise,
+            overcrowding = overcrowding,
+            diabetics = Diabetics,
+            insuf_sleep = Insufficient.Sleep,
+            traffic_vol = Traffic.Volume,
+            above_65 = X65..Above.Population,
+            rural_pop = Rural.Population)
+
+uscancer <- left_join(d1, d2, by="FIPS") %>%
+  left_join(d3, by="FIPS")
+
+head(uscancer)
+```
+
+
+# 3. Neteja de dades
+
+## 3.1. Gestió de valors perduts
+
+En primer lloc, explorem les dades mitjançant `str`.
+
+```{r}
+str(uscancer)
+```
+
+
+A continuació convertim les variables *met_obj_reduction* i *trend_recent_deaths* en factors i les variables *age_adj_deathrate*, *avg_deaths_year* i *trend_5y_deaths* en variables numèriques. També substituïm els valors `*` per `NA` i avaluem la quantitat de NAs al dataset mitjançant *ColSums* i *VIM::aggr()*.
+
+
+```{r}
+uscancer <- uscancer %>%
+  mutate(met_obj_reduction = factor(met_obj_reduction, 
+                                    levels = c("Yes", "No")),
+         trend_recent_deaths = factor(trend_recent_deaths, 
+                                      levels = c("rising", "stable","falling")),
+         age_adj_deathrate = as.numeric(age_adj_deathrate),
+         avg_deaths_year = as.numeric(avg_deaths_year),
+         trend_5y_deaths = as.numeric(trend_5y_deaths)
+         )
+
+colSums(is.na(uscancer))
+```
+
+```{r}
+aggr(uscancer, numbers=TRUE, sortVars=TRUE, labels=names(uscancer),
+cex.axis=.5, gap=0, ylab=c("Missing data","Pattern"))
+```
+
+
+Observem que, respecte les dades de mortalitat per càncer, no tenim informació completa sobre el rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*) en 328 comtats, sobre la mitjana de morts per any (*avg_deaths_year*) en 334 comtats (entre es quals alguns amb elevada població com San Francisco o Los Ángeles), i tampoc tenim informació sobre les tendències en la mortalitat (*trend_recent_deaths* i *trend_5y_deaths*) en 447 comtats. Per ser una mètrica que facilita la comparació entre comtats, centrarem els anàlisis subsegüents en les dades de rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*), que seleccionem com a variable d'interès. Observem que els 328 comtats pels què la variable *age_adj_deathrate* no té informació representen un 0.39% de la població total dels EEUU, tal i com indica la taula de sota. Per tant, prioritzant l'exactitud de les dades, hem decidit eliminar els registres que no tenen aquesta informació (`NAs` de *age_adj_deathrate*).
+
+
+```{r}
+uscancer %>%
+  mutate(canc_data = ifelse(is.na(age_adj_deathrate), "No", "Yes")) %>%
+  group_by(canc_data) %>%
+  summarise(population = sum(population, na.rm=T),
+            perc_total_pop = (sum(population, na.rm=T)/sum(uscancer$population, na.rm=T))*100)
+```
+
+En paral·lel, tenint en compte les variables demogràfiques, que tenen menys registres incomplets, observem que a banda dels 328 comtats sense dades de *age_adj_deathrate*, 3 comtats no tenen cap dada demogràfica disponible. Per això decidim eliminar aquests registres. A més, 19 registres addicionals no disposen de dades sobre la variable *food_env_index*. Aquesta variable és un indicador de la proximitat a menjar saludable així com de la capacitat econòmica per adquirir-ne de la població. Decidim assumir que els valors podrien ser semblants entre comtats que comparteixin altres característiques del dataset, i per tant s'ha recorregut a una imputació d'aquests 19 valors perduts mitjançant la funció *kNN* del paquet *VIM*.
+
+Finalment, observem que ja no queden valors perduts en les dades.
+
+
+```{r}
+uscancer_clean <- uscancer %>%
+  # Eliminem les variables de mortalitat per càncer que no ens interessen
+  select(-avg_deaths_year, -trend_recent_deaths, -trend_5y_deaths) %>%
+  # Eliminem els registres buits per age_adj_deathrate i 
+  # els que no tenen cap dada demogràfic (obesity n'és una)
+  filter(!is.na(age_adj_deathrate),
+         !is.na(obesity)) %>%
+  # Imputem els valors NA de food_env_index amb k-Nearest Neighbours
+  VIM::kNN(variable = "food_env_index") %>%
+  # Eliminem la columna que indica quins registres són imputats amb kNN
+  select(-food_env_index_imp)
+
+colSums(is.na(uscancer_clean))
+```
+
+
+## 3.2. Gestió de valors extrems
+
+Seguidament, avaluem la presència de valors extrems en les dades. Ja que disposem de múltiples variables i ens interessaria poder detectar outliers tenint en compte múltiples dimensions, hem decidit començar avaluant els outliers segons la distància de Mahalanobis per fer-nos una idea de quins podrien ser els casos extrems. Al codi de sota, es computa aquesta distància i es mostren els 30 comtats amb els valors de distància de Mahalanobis més elevats.
+
+```{r}
+# Dataframe de les variables numèriques contínues de uscancer_clean
+uscancer_cvars <- uscancer_clean %>%
+  select(-FIPS, -county, -state, 
+         -population, -met_obj_reduction)
+
+# 
+m.dist.order <- order(mahalanobis(uscancer_cvars, 
+                                  colMeans(uscancer_cvars), 
+                                  cov(uscancer_cvars)), 
+                      decreasing=TRUE)
+
+# 
+m.outliers <- uscancer_clean$county[m.dist.order]
+
+# Mostrem els top 30 outliers
+m.outliers[1:30]
+```
+
+
+Seguidament, mostrem com es distribueixen aquests 30 comtats més extrems sobre els 4 primers components principals.
+
+
+```{r}
+uscancer.pca <- prcomp(as.matrix(uscancer_cvars),
+                       center = TRUE,
+                       scale. = TRUE)
+
+labels_top30_outliers <- uscancer_clean$county
+labels_top30_outliers[-m.dist.order[1:30]] <- NA
+
+# Representem els top 30 outliers sobre els 6 primers components principals
+cowplot::plot_grid( ncol=2, nrow=1,
+  ggbiplot(uscancer.pca,
+           alpha=0.2,
+           labels = labels_top30_outliers,
+           choices=1:2
+           ) 
+  ,
+  ggbiplot(uscancer.pca,
+           alpha=0.2,
+           labels = labels_top30_outliers,
+           choices=3:4
+           )
+)
+```
+
+
+A sota mostrem la distribució de cada variable contínua en format boxplot, i també s'hi indiquen les posicions dels 30 comtats amb valors de Mahalanobis més elevats.
+
+
+```{r warning=F, error=F, message=F}
+uscancer_cvars %>%
+  mutate(top30_outliers = labels_top30_outliers) %>%
+  gather(var, value, -top30_outliers) %>%
+  ggplot(aes(x=1, 
+             y=value,
+             fill=var)) +
+  geom_boxplot() +
+  geom_text(aes(x=1+0.02,
+                y=value,
+                label=top30_outliers),
+            size=2.5,
+            hjust = 0
+            ) +
+  facet_wrap(~var, scales="free") +
+  theme_classic() +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+        legend.position = "none")
+```
+
+De les dades anteriors, destaquem 4 variables amb valors molt extrems:
+
+1. *above_65*: Observem que hi ha comtats que presenten una proporció de persones majors de 65 anys molt elevada, essent el màxim el comtat de Sumter, Florida, amb 57.6% de la població major de 65 anys. Considerem que aquests valors extrems són correctes ja que tenen una explicació sociodemogràfica: corresponen a comtats que són llocs de residència populars per a gent jubilada. Per tant, els mantenim en el dataset d'estudi.
+
+2. *overcrowding*: Es tracta d'una variable que identifica el percentatge de població que viu en espais amb una quantitat excessivament elevada de persones. En aquest cas observem valors elevats esperables per a comtats en grans ciutats (com Nova York, San Francisco o Los Angeles). Però observem que diversos comtats rurals presenten valors extrems (entre ells Bethel Census Area, North Slope Borough i Nome Census Area a Alaska). Tot i ser sorprenent d'entrada, sembla que [l'overcrowding en regions rurals és un problema real](https://www.pbs.org/newshour/show/how-a-housing-shortage-is-straining-communities-in-rural-alaska), especialment associat a pobresa i a una població predominantment de natius americans. Per tant, decidim mantenir aquests valors extrems.
+
+3. *smokers*: En aquest cas observem que els comtats outliers amb taxes molt elevades de fumadors (per sobre del 35% de la població) s'associen a [poblacions majoritàriament de natius americans](https://www.cdc.gov/tobacco/stateandcommunity/state-fact-sheets/south-dakota/index.html), mentre que els valors molt baixos es troben majoritàriament a l'estat de Utah, possiblement associats a població de religió mormona. El comtat de Utah, a Utah, amb un 5% de fumadors entre la població i un 82% són mormons. Atenent a aquests fets, decidim mantenir aquestes dades.
+
+4. *traffic_vol*: els valors més extrems corresponen a grans ciutats, especialment a Nova York. Per tant, també decidim mantenir aquests valors.
+
+
+Observant els valors extrems de les altres variables sociodemogràfiques, trobem que totes són explicables segons les particularitats de cada comtat, com ara la [taxa de diabètics del 34% de la població al comtat de Tippah, Mississippi](https://www.actionnews5.com/2021/04/22/investigators-mississippi-county-has-highest-rate-diabetes-us/). Per tant, tots els valors extrems trobats són explicables a causa de la diversitat existent entre regions del país, i els mantenim per als anàlisis subsegüents.
+
+
+# 4. Anàlisi de les dades
+
+
+
+
 
 
 
