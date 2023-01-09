@@ -19,6 +19,7 @@ if(!require(ggplot2)){install.packages("ggplot2")}
 if(!require(devtools)){install.packages("devtools")}
 if(!require(ggbiplot)){devtools::install_github("vqv/ggbiplot")}
 if(!require(cowplot)){install.packages("cowplot")}
+if(!require(ggpubr)){install.packages("ggpubr")}
 library(dplyr)
 library(tidyr)
 library(stringr)
@@ -27,6 +28,7 @@ library(ggplot2)
 library(devtools)
 library(ggbiplot)
 library(cowplot)
+library("ggpubr")
 ```
 
 
@@ -79,7 +81,7 @@ d1 <- dcancerdeath %>%
 
 d2 <- dpoblacio %>%
   # Seleccionem les columnes de l'ID del county i la població
-  transmute(FIPS = countyFIPS,
+  transmute(FIPS = ï..countyFIPS,
             population) %>%
   # Eliminem els registres a nivell estatal
   filter(FIPS != 0)
@@ -260,14 +262,124 @@ De les dades anteriors, destaquem 4 variables amb valors molt extrems:
 
 Observant els valors extrems de les altres variables sociodemogràfiques, trobem que totes són explicables segons les particularitats de cada comtat, com ara la [taxa de diabètics del 34% de la població al comtat de Tippah, Mississippi](https://www.actionnews5.com/2021/04/22/investigators-mississippi-county-has-highest-rate-diabetes-us/). Per tant, tots els valors extrems trobats són explicables a causa de la diversitat existent entre regions del país, i els mantenim per als anàlisis subsegüents.
 
+```{r include=FALSE}
+# Neteja
+remove(d1,d2,d3,dcancerdeath,dpoblacio,dusparam,uscancer,uscancer_cvars,uscancer.pca,labels_top30_outliers,m.dist.order,m.outliers)
+```
+
 
 # 4. Anàlisi de les dades
 
+Una vegada tenim les dades netejades, ordenades i seleccionades procedirem a l'anàlisi d'aquestes. Concretament hem decidit estudiar-les a través de tres perspectives: Primerament estudiarem la mortalitat del càncer segons si es tracta de comtats urbans o rurals; després estudiarem com influeixen les diferents variables a la mortalitat per càncer; i finalment tractarem de crear un model que puga predir la mortalitat del càncer segons les diferents variàbles donades.
+
+## 4.1 Estudi de la mortalitat segons ruralitat
+
+Com hem comentat, en aquest apartat estudiarem la mortalitat del càncer segons si es tracta de comtats rurals o urbans. Aquest estudi és interessant perquè es comenta habitualment que els entorns urbans afavoreixen la mortalitat per càncer. Per tant és interessant saber si la mitjana poblacional dels comtats urbans és major a la mitjana dels entorns rurals.
+
+Per fer aquest anàlisi, primerament discretitzem les dades en una nova columna, *isurban*, on guardarem els comtats que tinguen una *rural_pop* major a 50 com a 1, i la resta com a 0. Interpretem que els comtats amb 1 equivalen a entorns urbans i els que tenen valor 0 com entorns rurals.
+
+
+```{r}
+# Discretització de la columna rural_pop en una nova variable
+uscancer_clean$is_urban <- uscancer_clean$rural_pop
+uscancer_clean$is_urban[uscancer_clean$rural_pop >= 50] <- 1
+uscancer_clean$is_urban[uscancer_clean$rural_pop < 50] <- 0
+```
+
+
+```{r echo=FALSE}
+recompte <- count(uscancer_clean$is_urban == 1)
+total <- nrow(uscancer_clean)
+cat("Hi ha",recompte$freq[1],"comtats rurals i",recompte$freq[2],"comtats urbans.
+Els comtats urbans suposen el",round(((recompte$freq[1]*100)/total),2),"% dels registres.
+Mentre que els comtats urbans representen el",round(((recompte$freq[2]*100)/total),2),"%.")
+
+remove(recompte,total)
+```
+
+Una vegada tenim la variable discretitzada, cal estudiar la normalitat i l'homogeneitat de les dades per determinar quin test aplicar-hi. Primerament estudiarem la normalitat de les dades amb el test de Shapiro-Wilk:
+
+```{r}
+# Comprovem la normalitat de les dades:
+shapiro.test(uscancer_clean$age_adj_deathrate)
+```
+
+Tot i que obtenim un valor estadístic elevat, el p-valor és molt menut i per tant s'ha de descartar l'hipòtesi nul·la de normalitat. Amb aquest resultat hem de concloure que les dades no segueixen una distribució normal. Així i tot, procurarem de millorar la normalitat abans de continuar. Primerament eliminarem els valors extrems que superen la ràtio del 100%.
+
+
+```{r}
+# Eliminem els outliers majors a 100 del deathrate
+uscancer_clean2 <- uscancer_clean
+uscancer_clean2<-uscancer_clean2[!(uscancer_clean2$age_adj_deathrate > 100),]
+shapiro.test(uscancer_clean2$age_adj_deathrate)
+```
+
+Tot i que es millora la normalitat de les dades, segueix essent insuficient, ja que també ens dóna un p-valor molt menut que ens obliga a descartar la normalitat. Provarem finalment a fer una transformació per millorar encara més la seua normalitat:
+
+```{r}
+# Després d'haver fet la distribució més endavant, sabem que té una desviació
+# lleugera positiva. Per tant la millor transformació és l'arrel quadrada.
+dades_trans <- sqrt(uscancer_clean2$age_adj_deathrate)
+shapiro.test(dades_trans)
+```
+
+Una vegada més, tot i que obtenim una millora en la normalitat de les dades, seguim amb un p-valor inferior a 0.05. Com la transformació no ens ha ajudat per arreglar la normalitat de les dades la descartarem per evitar complicar l'interpretació dels test. Al veure que no es pot millorar la normalitat amb test formals, hem decidit visualitzar la distribució de la mortalitat per veure si s'aproxima a una distribució normal. A la gràfica de sota s'hi pot veure amb claritat que la nostra distribució és prou semblant a una distribució normal. És per això que decidim concloure que les dades tenen una distribució normal, però ens calen més mostres per poder afirmar-ho formalment. És a dir, amb més dades la distribució tendirà a una distribució normal. El que volem dir és que ens basem exclusivament en el Teorema del Limit Central i l'observació de la densitat per afirmar que les dades segueixen una distribució normal. Asumim per tant la seua normalitat.
+
+
+```{r}
+ggdensity(uscancer_clean2$age_adj_deathrate, 
+          main = "Plot de densitat de mortalitat",
+          xlab = "Ratio de mortalitat")
+```
+
+Ara cal revisar que els dos paràmetres que volem comparar tinguen una variància igual per la ràtio de mortalitat. Com sabem que es sol dir que en els entorns urbans augmenta la mortalitat, podem intuïr que la variància no serà igual. Així i tot, comprovem l'homoscedasticitat:
+
+
+```{r}
+# Separació de les dades
+rural <- uscancer_clean2[!(uscancer_clean2$is_urban == 1),]
+urban <- uscancer_clean2[!(uscancer_clean2$is_urban == 0),]
+
+
+var.test(rural$age_adj_deathrate,
+         urban$age_adj_deathrate,
+         conf.level = 0.95)
+
+
+boxplot(rural$age_adj_deathrate,
+        urban$age_adj_deathrate,
+        col="yellow",ylab="Ratio de mortalitat",main="Diferencia de mortalitat")
+```
+
+A través d'una inspecció visual, i del var.test, podem concloure que ambdues poblacions tenen variàncies diferents. Primerament al var.test veiem que el p-valor no és superior a 0.05, i després podem observar les distribucions d'ambdós paràmetres i s'hi veu com les dades dels entorns urbans tendeixen a ser pitjors (major mortalitat).
+
+
+Ara, finalment, aplicarem un test per comparar dues poblacions independents, que asumim que seran normals, amb variàncies desconegudes i diferents. La nostra hipòtesi nul·la és que les mitjanes són iguals per a ambdues poblacions; i la nostra hipòtesi alternativa és que la mitjana dels entorns urbans és major a la rural. És a dir:
+
+**H0** = y(urban) = y(rural)
+
+**H1** = y(urban) > y(rural)
+
+```{r}
+t.test(urban$age_adj_deathrate,
+       rural$age_adj_deathrate,
+       alternative="greater",var.equal=FALSE,conf.level=0.95)
+```
+
+Amb una confinança del 95% podem concloure que la mitjana del ràtio de mortalitat en entorns urbans és major que la mitjana als entorns rurals. És a dir:  y(urban) > y(rural). Extraiem aquesta conclusió perquè el p-valor és menor que la significància escollida, 0.05, i per tant s'ha de descartar l'hipòtesi nul·la i acceptar l'alternativa.
+
+Tot això ens ve a dir que els factors ambientals influèixen a la mortalitat del càncer. Concretament, les persones que viuen en entorns urbans tenen més risc de morir per càncer que les persones que viuen a entorns rurals.
+
+```{r include=FALSE}
+remove(dades_trans)
+```
 
 
 
+## 4.2 Estudi de la mortalitat segons variables de control
 
 
+## 4.3 Model predictiu de la mortalitat per càncer
 
 
 
