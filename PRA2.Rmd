@@ -2,12 +2,14 @@
 title: 'PRA2: Com realitzar la neteja i l''anàlisi de dades?'
 author: "Àlex Franco Granell; Roger Esteban Fabró"
 date: "Gener 2023"
-output: pdf_document
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    df_print: paged
+    toc: true
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
 ```{r echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
 # Carreguem els packages
@@ -20,6 +22,9 @@ if(!require(devtools)){install.packages("devtools")}
 if(!require(ggbiplot)){devtools::install_github("vqv/ggbiplot")}
 if(!require(cowplot)){install.packages("cowplot")}
 if(!require(ggpubr)){install.packages("ggpubr")}
+if(!require(corrplot)){install.packages("corrplot")}
+if(!require(Hmisc)){install.packages("Hmisc")}
+if(!require(faraway)){install.packages("faraway")}
 library(dplyr)
 library(tidyr)
 library(stringr)
@@ -28,13 +33,22 @@ library(ggplot2)
 library(devtools)
 library(ggbiplot)
 library(cowplot)
-library("ggpubr")
+library(ggpubr)
+library(corrplot)
+library(Hmisc)
+library(faraway)
 ```
 
 
 # 1. Descripció del dataset
 
-Hem escollit investigar quins factors sociodemogràfics tenen un major impacte sobre la incidència de càncer als Estats Units. Per fer aquest anàlisi s'ha escollit tres datasets amb dades dels Estats Units que mostren la mortalitat per comtat, i diversos paràmetres demogràfics. Concretament utilitzem els datasets de ["Cancer Mortality & Incidence Rates: (Country LVL)"](https://www.kaggle.com/datasets/thedevastator/us-county-level-cancer-mortality-and-incidence-r?resource=download&select=death+.csv), les dades dels EUA de ["Demographics & observation for pandemic escalation"](https://www.kaggle.com/code/aestheteaman01/demographics-observation-for-pandemic-escalation/data?select=us-county.csv), i un dataset [d'usafacts.org](https://static.usafacts.org/public/data/covid-19/covid_county_population_usafacts.csv?_ga=2.202830163.395284796.1672845391-1680078968.1672845391) que recull la població dels diversos comtats del país. Els dos primers es troben disponibles a kaggle i contenen les dades bàsiques per als anàlisis fets posteriorment.
+Hem decidit investigar quins factors sociodemogràfics poden influir sobre la incidència de càncer als Estats Units. Per fer aquest anàlisi s'han escollit tres datasets que permeten obtenir la taxa de mortalitat per càncer en cada comtat del país juntament amb diversos paràmetres demogràfics. Concretament utilitzem els datasets de ["Cancer Mortality & Incidence Rates: (Country LVL)"](https://www.kaggle.com/datasets/thedevastator/us-county-level-cancer-mortality-and-incidence-r?resource=download&select=death+.csv), les dades dels EEUU de ["Demographics & observation for pandemic escalation"](https://www.kaggle.com/code/aestheteaman01/demographics-observation-for-pandemic-escalation/data?select=us-county.csv), i un dataset [d'usafacts.org](https://static.usafacts.org/public/data/covid-19/covid_county_population_usafacts.csv?_ga=2.202830163.395284796.1672845391-1680078968.1672845391) que recull la població dels diversos comtats del país. Els dos primers es troben disponibles a kaggle i contenen les dades bàsiques per als anàlisis fets posteriorment.
+
+Els objectius específics dels anàlisis realitzats són els següents:
+
+-   Avaluar si la taxa de mortalitat depèn de si la població del comtat viu majoritàriament en zones rurals o urbanes.
+-   Investigar quines variables sociodemogràfiques dels comtats correlacionen amb la seva taxa de mortalitat per càncer.
+-   Generar un model de regressió lineal per a la mortalitat per càncer als comtats segons els valors de les variables sociodemogràfiques de més interès.
 
 
 # 2. Integració i selecció de dades
@@ -42,25 +56,31 @@ Hem escollit investigar quins factors sociodemogràfics tenen un major impacte s
 
 A continuació, carreguem les dades originals i mostrem els primers registres per pantalla.
 
+Dades de *covid_county_population_usafacts.csv*:
+
 ```{r}
 dpoblacio <- read.csv('./CSVs Originals/covid_county_population_usafacts.csv', sep=',')
-head(dpoblacio)
+head(dpoblacio) %>% knitr::kable()
 ```
 
+
+Dades de *death.csv*:
 
 ```{r}
 dcancerdeath <- read.csv('./CSVs Originals/death.csv', sep=',')
-head(dcancerdeath)
+head(dcancerdeath)[,1:5]  %>% knitr::kable()
 ```
 
+
+Dades de *us-county.csv*:
 
 ```{r}
 dusparam <- read.csv('./CSVs Originals/us-county.csv', sep=',')
-head(dusparam)
+head(dusparam)[,1:9]  %>% knitr::kable()
 ```
 
 
-A continuació modifiquem individualment els datasets per a la seva posterior integració.
+A continuació modifiquem individualment els datasets per seleccionar i reanomenar les variables d'interès i integrem les dades en una sola dataframe, *uscancer*.
 
 ```{r}
 d1 <- dcancerdeath %>%
@@ -81,7 +101,7 @@ d1 <- dcancerdeath %>%
 
 d2 <- dpoblacio %>%
   # Seleccionem les columnes de l'ID del county i la població
-  transmute(FIPS = ï..countyFIPS,
+  transmute(FIPS = countyFIPS,
             population) %>%
   # Eliminem els registres a nivell estatal
   filter(FIPS != 0)
@@ -101,8 +121,11 @@ d3 <- dusparam %>%
 
 uscancer <- left_join(d1, d2, by="FIPS") %>%
   left_join(d3, by="FIPS")
+```
 
-head(uscancer)
+
+```{r}
+head(uscancer)[,1:6]  %>% knitr::kable()
 ```
 
 
@@ -120,7 +143,7 @@ str(uscancer)
 A continuació convertim les variables *met_obj_reduction* i *trend_recent_deaths* en factors i les variables *age_adj_deathrate*, *avg_deaths_year* i *trend_5y_deaths* en variables numèriques. També substituïm els valors `*` per `NA` i avaluem la quantitat de NAs al dataset mitjançant *ColSums* i *VIM::aggr()*.
 
 
-```{r}
+```{r message=F, warning=F, error=F}
 uscancer <- uscancer %>%
   mutate(met_obj_reduction = factor(met_obj_reduction, 
                                     levels = c("Yes", "No")),
@@ -130,25 +153,29 @@ uscancer <- uscancer %>%
          avg_deaths_year = as.numeric(avg_deaths_year),
          trend_5y_deaths = as.numeric(trend_5y_deaths)
          )
+```
 
+
+```{r  message=F, warning=F, error=F}
 colSums(is.na(uscancer))
 ```
 
-```{r}
+```{r  message=F, warning=F, error=F}
 aggr(uscancer, numbers=TRUE, sortVars=TRUE, labels=names(uscancer),
 cex.axis=.5, gap=0, ylab=c("Missing data","Pattern"))
 ```
 
 
-Observem que, respecte les dades de mortalitat per càncer, no tenim informació completa sobre el rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*) en 328 comtats, sobre la mitjana de morts per any (*avg_deaths_year*) en 334 comtats (entre es quals alguns amb elevada població com San Francisco o Los Ángeles), i tampoc tenim informació sobre les tendències en la mortalitat (*trend_recent_deaths* i *trend_5y_deaths*) en 447 comtats. Per ser una mètrica que facilita la comparació entre comtats, centrarem els anàlisis subsegüents en les dades de rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*), que seleccionem com a variable d'interès. Observem que els 328 comtats pels què la variable *age_adj_deathrate* no té informació representen un 0.39% de la població total dels EEUU, tal i com indica la taula de sota. Per tant, prioritzant l'exactitud de les dades, hem decidit eliminar els registres que no tenen aquesta informació (`NAs` de *age_adj_deathrate*).
+Observem que, respecte les dades de mortalitat per càncer, no tenim informació completa sobre el rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*) en 328 comtats, sobre la mitjana de morts per any (*avg_deaths_year*) en 334 comtats (entre es quals alguns amb elevada població com San Francisco o Los Ángeles), i tampoc tenim informació sobre les tendències en la mortalitat (*trend_recent_deaths* i *trend_5y_deaths*) en 447 comtats. Per ser una mètrica normalitzada que facilita la comparació entre comtats, centrarem els anàlisis subsegüents en les dades de rati de mortalitat per càncer ajustada per edat (*age_adj_deathrate*), que seleccionem com a variable d'interès. Observem que els 328 comtats pels què la variable *age_adj_deathrate* no té informació representen un 0.39% de la població total dels EEUU, tal i com indica la taula de sota. Per tant, prioritzant l'exactitud de les dades, hem decidit eliminar els registres que no tenen aquesta informació (`NAs` de *age_adj_deathrate*).
 
 
-```{r}
+```{r  message=F, warning=F, error=F}
 uscancer %>%
   mutate(canc_data = ifelse(is.na(age_adj_deathrate), "No", "Yes")) %>%
   group_by(canc_data) %>%
-  summarise(population = sum(population, na.rm=T),
-            perc_total_pop = (sum(population, na.rm=T)/sum(uscancer$population, na.rm=T))*100)
+  dplyr::summarise(population = sum(population, na.rm=T),
+            perc_total_pop = (sum(population, na.rm=T)/sum(uscancer$population, na.rm=T))*100) %>%
+  knitr::kable()
 ```
 
 En paral·lel, tenint en compte les variables demogràfiques, que tenen menys registres incomplets, observem que a banda dels 328 comtats sense dades de *age_adj_deathrate*, 3 comtats no tenen cap dada demogràfica disponible. Per això decidim eliminar aquests registres. A més, 19 registres addicionals no disposen de dades sobre la variable *food_env_index*. Aquesta variable és un indicador de la proximitat a menjar saludable així com de la capacitat econòmica per adquirir-ne de la població. Decidim assumir que els valors podrien ser semblants entre comtats que comparteixin altres característiques del dataset, i per tant s'ha recorregut a una imputació d'aquests 19 valors perduts mitjançant la funció *kNN* del paquet *VIM*.
@@ -183,13 +210,14 @@ uscancer_cvars <- uscancer_clean %>%
   select(-FIPS, -county, -state, 
          -population, -met_obj_reduction)
 
-# 
+# Obtenim les posicions dels outliers per ordre decreixent de 
+# distància de Mahalanobis
 m.dist.order <- order(mahalanobis(uscancer_cvars, 
                                   colMeans(uscancer_cvars), 
                                   cov(uscancer_cvars)), 
                       decreasing=TRUE)
 
-# 
+# Obtenim el nom dels outliers per ordre
 m.outliers <- uscancer_clean$county[m.dist.order]
 
 # Mostrem els top 30 outliers
@@ -200,7 +228,7 @@ m.outliers[1:30]
 Seguidament, mostrem com es distribueixen aquests 30 comtats més extrems sobre els 4 primers components principals.
 
 
-```{r}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 uscancer.pca <- prcomp(as.matrix(uscancer_cvars),
                        center = TRUE,
                        scale. = TRUE)
@@ -255,133 +283,321 @@ De les dades anteriors, destaquem 4 variables amb valors molt extrems:
 
 2. *overcrowding*: Es tracta d'una variable que identifica el percentatge de població que viu en espais amb una quantitat excessivament elevada de persones. En aquest cas observem valors elevats esperables per a comtats en grans ciutats (com Nova York, San Francisco o Los Angeles). Però observem que diversos comtats rurals presenten valors extrems (entre ells Bethel Census Area, North Slope Borough i Nome Census Area a Alaska). Tot i ser sorprenent d'entrada, sembla que [l'overcrowding en regions rurals és un problema real](https://www.pbs.org/newshour/show/how-a-housing-shortage-is-straining-communities-in-rural-alaska), especialment associat a pobresa i a una població predominantment de natius americans. Per tant, decidim mantenir aquests valors extrems.
 
-3. *smokers*: En aquest cas observem que els comtats outliers amb taxes molt elevades de fumadors (per sobre del 35% de la població) s'associen a [poblacions majoritàriament de natius americans](https://www.cdc.gov/tobacco/stateandcommunity/state-fact-sheets/south-dakota/index.html), mentre que els valors molt baixos es troben majoritàriament a l'estat de Utah, possiblement associats a població de religió mormona. El comtat de Utah, a Utah, amb un 5% de fumadors entre la població i un 82% són mormons. Atenent a aquests fets, decidim mantenir aquestes dades.
+3. *smokers*: En aquest cas observem que els comtats outliers amb taxes molt elevades de fumadors (per sobre del 35% de la població) s'associen a [poblacions majoritàriament de natius americans](https://www.cdc.gov/tobacco/stateandcommunity/state-fact-sheets/south-dakota/index.html), mentre que els valors molt baixos es troben majoritàriament a l'estat de Utah, possiblement associats a població de religió mormona. El comtat de Utah, a l'estat de Utah, té un 5% de fumadors entre una població on un 82% són mormons. Atenent a aquests fets, decidim mantenir aquestes dades.
 
-4. *traffic_vol*: els valors més extrems corresponen a grans ciutats, especialment a Nova York. Per tant, també decidim mantenir aquests valors.
+4. *traffic_vol*: els valors més extrems corresponen a grans ciutats, especialment a Nova York. Per tant, els considerem dades vàlides i també decidim mantenir aquests valors.
 
 
 Observant els valors extrems de les altres variables sociodemogràfiques, trobem que totes són explicables segons les particularitats de cada comtat, com ara la [taxa de diabètics del 34% de la població al comtat de Tippah, Mississippi](https://www.actionnews5.com/2021/04/22/investigators-mississippi-county-has-highest-rate-diabetes-us/). Per tant, tots els valors extrems trobats són explicables a causa de la diversitat existent entre regions del país, i els mantenim per als anàlisis subsegüents.
 
 ```{r include=FALSE}
-# Neteja
+# Neteja dels objectes que no es faran servir a partir d'aquí
 remove(d1,d2,d3,dcancerdeath,dpoblacio,dusparam,uscancer,uscancer_cvars,uscancer.pca,labels_top30_outliers,m.dist.order,m.outliers)
 ```
 
 
 # 4. Anàlisi de les dades
 
-Una vegada tenim les dades netejades, ordenades i seleccionades procedirem a l'anàlisi d'aquestes. Concretament hem decidit estudiar-les a través de tres perspectives: Primerament estudiarem la mortalitat del càncer segons si es tracta de comtats urbans o rurals; després estudiarem com influeixen les diferents variables a la mortalitat per càncer; i finalment tractarem de crear un model que puga predir la mortalitat del càncer segons les diferents variàbles donades.
 
-## 4.1 Estudi de la mortalitat segons ruralitat
+Una vegada tenim les dades netejades, ordenades i seleccionades procedirem a l'anàlisi d'aquestes. Concretament hem decidit estudiar-les a través de tres perspectives: Primerament avaluarem l'existència de diferències en la taxa de mortalitat per càncer segons si es tracta de comtats urbans o rurals; després estudiarem si les diferents variables sociodemogràfiques de què disposem correlacionen amb la taxa mortalitat per càncer; i finalment tractarem de crear un model que puga predir la mortalitat del càncer segons les diferents variàbles donades.
+
+
+## 4.1. Estudi de la mortalitat per càncer entre comtats rurals i urbans
+
 
 Com hem comentat, en aquest apartat estudiarem la mortalitat del càncer segons si es tracta de comtats rurals o urbans. Aquest estudi és interessant perquè es comenta habitualment que els entorns urbans afavoreixen la mortalitat per càncer. Per tant és interessant saber si la mitjana poblacional dels comtats urbans és major a la mitjana dels entorns rurals.
 
-Per fer aquest anàlisi, primerament discretitzem les dades en una nova columna, *isurban*, on guardarem els comtats que tinguen una *rural_pop* major a 50 com a 1, i la resta com a 0. Interpretem que els comtats amb 1 equivalen a entorns urbans i els que tenen valor 0 com entorns rurals.
+Per fer aquest anàlisi, primerament discretitzem les dades en una nova columna, *isurban*, on guardarem els comtats que tinguen una *rural_pop* major a 50 com a 1, i la resta com a 0. Interpretem que els comtats amb 1 equivalen a entorns urbans i els que tenen valor 0 a entorns rurals.
 
 
 ```{r}
 # Discretització de la columna rural_pop en una nova variable
 uscancer_clean$is_urban <- uscancer_clean$rural_pop
-uscancer_clean$is_urban[uscancer_clean$rural_pop >= 50] <- 1
-uscancer_clean$is_urban[uscancer_clean$rural_pop < 50] <- 0
+uscancer_clean$is_urban[uscancer_clean$rural_pop >= 50] <- 0
+uscancer_clean$is_urban[uscancer_clean$rural_pop < 50] <- 1
 ```
 
 
 ```{r echo=FALSE}
-recompte <- count(uscancer_clean$is_urban == 1)
+recompte <- sum(uscancer_clean$is_urban == 1)
 total <- nrow(uscancer_clean)
-cat("Hi ha",recompte$freq[1],"comtats rurals i",recompte$freq[2],"comtats urbans.
-Els comtats urbans suposen el",round(((recompte$freq[1]*100)/total),2),"% dels registres.
-Mentre que els comtats urbans representen el",round(((recompte$freq[2]*100)/total),2),"%.")
+cat("Hi ha",total-recompte,"comtats rurals i",recompte,"comtats urbans.
+Els comtats urbans suposen el",round(((recompte*100)/total),2),"% dels registres,
+mentre que els comtats urbans representen el",round((((total-recompte)*100)/total),2),"%.")
 
 remove(recompte,total)
 ```
 
-Una vegada tenim la variable discretitzada, cal estudiar la normalitat i l'homogeneitat de les dades per determinar quin test aplicar-hi. Primerament estudiarem la normalitat de les dades amb el test de Shapiro-Wilk:
+Una vegada tenim la variable *is_urban* discretitzada, cal estudiar la normalitat i l'homoscedasticitat de les dades de mortalitat per càncer per determinar quin test aplicar. Primerament estudiarem la normalitat de les dades amb el test de Shapiro-Wilk:
 
 ```{r}
 # Comprovem la normalitat de les dades:
 shapiro.test(uscancer_clean$age_adj_deathrate)
 ```
 
-Tot i que obtenim un valor estadístic elevat, el p-valor és molt menut i per tant s'ha de descartar l'hipòtesi nul·la de normalitat. Amb aquest resultat hem de concloure que les dades no segueixen una distribució normal. Així i tot, procurarem de millorar la normalitat abans de continuar. Primerament eliminarem els valors extrems que superen la ràtio del 100%.
 
-
-```{r}
-# Eliminem els outliers majors a 100 del deathrate
-uscancer_clean2 <- uscancer_clean
-uscancer_clean2<-uscancer_clean2[!(uscancer_clean2$age_adj_deathrate > 100),]
-shapiro.test(uscancer_clean2$age_adj_deathrate)
-```
-
-Tot i que es millora la normalitat de les dades, segueix essent insuficient, ja que també ens dóna un p-valor molt menut que ens obliga a descartar la normalitat. Provarem finalment a fer una transformació per millorar encara més la seua normalitat:
+Observem que el test de Shapiro-Wilk indica que les dades no segueixen una distribució normal, ja que el p-valor és inferior al nivell de significació del 5%.
+Provarem a fer una transformació per millorar la normalitat:
 
 ```{r}
 # Després d'haver fet la distribució més endavant, sabem que té una desviació
 # lleugera positiva. Per tant la millor transformació és l'arrel quadrada.
-dades_trans <- sqrt(uscancer_clean2$age_adj_deathrate)
+dades_trans <- sqrt(uscancer_clean$age_adj_deathrate)
 shapiro.test(dades_trans)
 ```
 
-Una vegada més, tot i que obtenim una millora en la normalitat de les dades, seguim amb un p-valor inferior a 0.05. Com la transformació no ens ha ajudat per arreglar la normalitat de les dades la descartarem per evitar complicar l'interpretació dels test. Al veure que no es pot millorar la normalitat amb test formals, hem decidit visualitzar la distribució de la mortalitat per veure si s'aproxima a una distribució normal. A la gràfica de sota s'hi pot veure amb claritat que la nostra distribució és prou semblant a una distribució normal. És per això que decidim concloure que les dades tenen una distribució normal, però ens calen més mostres per poder afirmar-ho formalment. És a dir, amb més dades la distribució tendirà a una distribució normal. El que volem dir és que ens basem exclusivament en el Teorema del Limit Central i l'observació de la densitat per afirmar que les dades segueixen una distribució normal. Asumim per tant la seua normalitat.
+
+Tot i que obtenim una millora en la normalitat de les dades, seguim amb un p-valor inferior a 0.05. Com que la transformació no ha estat prou per arreglar la normalitat de les dades, la descartarem per evitar complicar l'interpretació dels tests posteriors. Al veure que no es pot millorar la normalitat amb test formals, hem decidit visualitzar la distribució de la mortalitat per veure si s'aproxima a una distribució normal. A les gràfiques de sota s'hi pot veure que la nostra distribució s'aproxima a una distribució normal amb una cua cap a la dreta, i aixà fa que només presenti una lleugera desviació del patró d'una distribució normal en el marge dret del Q-Q plot. Atenent a aquestes dades i segons el teorema central del límit, decidim assumir que la mitjana mostral resultant tendirà a una distribució normal i aplicarem un test paramètric per a la comparació de les mitjanes de mortalitat entre comtats rurals i urbans.
 
 
 ```{r}
-ggdensity(uscancer_clean2$age_adj_deathrate, 
+ggdensity(uscancer_clean$age_adj_deathrate, 
           main = "Plot de densitat de mortalitat",
           xlab = "Ratio de mortalitat")
 ```
 
-Ara cal revisar que els dos paràmetres que volem comparar tinguen una variància igual per la ràtio de mortalitat. Com sabem que es sol dir que en els entorns urbans augmenta la mortalitat, podem intuïr que la variància no serà igual. Així i tot, comprovem l'homoscedasticitat:
+
+```{r}
+qqnorm(uscancer_clean$age_adj_deathrate)
+qqline(uscancer_clean$age_adj_deathrate,col=2)
+```
+
+
+A continuacio avaluem si els dos nivells de la variable *is_urban* que volem comparar tenen una variància igual per la ràtio de mortalitat. Comprovem l'homoscedasticitat amb el codi següent, i representem les distribucions dels valors de la variància en comtats rurals i urbans mitjançant un boxplot:
 
 
 ```{r}
 # Separació de les dades
-rural <- uscancer_clean2[!(uscancer_clean2$is_urban == 1),]
-urban <- uscancer_clean2[!(uscancer_clean2$is_urban == 0),]
+rural <- uscancer_clean[!(uscancer_clean$is_urban == 1),]
+urban <- uscancer_clean[!(uscancer_clean$is_urban == 0),]
 
 
 var.test(rural$age_adj_deathrate,
          urban$age_adj_deathrate,
          conf.level = 0.95)
-
-
-boxplot(rural$age_adj_deathrate,
-        urban$age_adj_deathrate,
-        col="yellow",ylab="Ratio de mortalitat",main="Diferencia de mortalitat")
 ```
 
-A través d'una inspecció visual, i del var.test, podem concloure que ambdues poblacions tenen variàncies diferents. Primerament al var.test veiem que el p-valor no és superior a 0.05, i després podem observar les distribucions d'ambdós paràmetres i s'hi veu com les dades dels entorns urbans tendeixen a ser pitjors (major mortalitat).
+
+```{r}
+boxplot(rural$age_adj_deathrate,
+        urban$age_adj_deathrate,
+        col="yellow",ylab="Taxa de mortalitat",
+        main="Diferència de mortalitat",
+        names=c("comtats rurals","comtats urbans"))
+```
+
+A través d'una inspecció visual, i del var.test, podem concloure que ambdues poblacions tenen variàncies diferents. Al var.test, veiem que el p-valor és inferior al nivell de significació 0.05, fet que ens fa rebutjar la hipòtesi nul·la d'homoscedasticitat.
 
 
-Ara, finalment, aplicarem un test per comparar dues poblacions independents, que asumim que seran normals, amb variàncies desconegudes i diferents. La nostra hipòtesi nul·la és que les mitjanes són iguals per a ambdues poblacions; i la nostra hipòtesi alternativa és que la mitjana dels entorns urbans és major a la rural. És a dir:
+Ara, finalment, aplicarem un test per comparar dues poblacions independents, que assumim que segueixen una distribució normal, amb variàncies desconegudes i diferents. La nostra hipòtesi nul·la és que les mitjanes són iguals per a ambdues poblacions; i la nostra hipòtesi alternativa és que la mitjana dels entorns urbans és diferent a la rural. És a dir:
 
 **H0** = y(urban) = y(rural)
 
-**H1** = y(urban) > y(rural)
+**H1** = y(urban) != y(rural)
 
 ```{r}
 t.test(urban$age_adj_deathrate,
        rural$age_adj_deathrate,
-       alternative="greater",var.equal=FALSE,conf.level=0.95)
+       alternative="two.sided",
+       var.equal=FALSE,
+       conf.level=0.95)
 ```
 
-Amb una confinança del 95% podem concloure que la mitjana del ràtio de mortalitat en entorns urbans és major que la mitjana als entorns rurals. És a dir:  y(urban) > y(rural). Extraiem aquesta conclusió perquè el p-valor és menor que la significància escollida, 0.05, i per tant s'ha de descartar l'hipòtesi nul·la i acceptar l'alternativa.
 
-Tot això ens ve a dir que els factors ambientals influèixen a la mortalitat del càncer. Concretament, les persones que viuen en entorns urbans tenen més risc de morir per càncer que les persones que viuen a entorns rurals.
+Amb una confiança del 95% podem rebutjar la hipòtesi nul·la i concloure que la mitjana del ràtio de mortalitat en entorns rurals és major que la mitjana als entorns urbans És a dir:  y(rural) > y(urban). Extraiem aquesta conclusió perquè el p-valor és menor que la significància escollida, 0.05, i per tant s'ha de descartar l'hipòtesi nul·la i acceptar l'alternativa. Observant els valors de les mitjanes i el boxplot anterior, concloem que els comtats rurals tenen valors de mortalitat per càncer superiors als urbans.
+
+Cal destacar que aquest resultat seria contrari a allò que sospitàvem inicialment, fet que ens condueix a pensar que altres factors podrien emmascarar l'impacte ambiental de les ciutats sobre la mortalitat per càncer: algun d'aquests factors (que no hem avaluat aquí per no tenir-ne les dades) podria ser la diferència en el nivell econòmic entre comtats o la facilitat d'accés a centres hospitalaris.
+
 
 ```{r include=FALSE}
+#neteja de dades
 remove(dades_trans)
 ```
 
 
-
-## 4.2 Estudi de la mortalitat segons variables de control
-
-
-## 4.3 Model predictiu de la mortalitat per càncer
+## 4.2 Estudi de la correlació entre mortalitat per càncer i variables sociodemogràfiques
 
 
+Seguidament, ens interessa determinar si existeix una correlació entre *age_adj_deathrate* i les 9 variables sociodemogràfiques *smokers*, *obesity*, *food_env_index*, *exercise*, *overcrowding*, *diabetics*, *insuf_sleep*, *traffic_vol* i *rural_pop*. Hem exclòs la variable *above_65* ja que *age_adj_deathrate* és una mètrica que ja té en compte l'edat de la població.
+
+```{r}
+# Guardem els valors de mortalitat en l'objecte mortality
+mortality = uscancer_clean$age_adj_deathrate
+
+# Convertim uscancer_clean a un format llarg de dataframe per fer els
+# tests i plots alhora per a totes les variables
+uscancer_clean_long <- uscancer_clean %>%
+  select(smokers, obesity, food_env_index, exercise, overcrowding,
+         diabetics, insuf_sleep, traffic_vol, rural_pop) %>%
+  gather(variable, value)
+```
 
 
+En primer lloc, necessitem comprovar la normalitat en la distribució dels valors d'aquestes variables, i ho fem mitjançant el test de Shapiro-Wilk.
 
+```{r warning=F, error=F, message=F}
+# Fem servir dplyr per avaluar si les variables d'interès s'ajusten a una 
+# distribució normal
+uscancer_clean_long  %>%
+  group_by(variable) %>%
+  dplyr::summarise(shapiro_pval = shapiro.test(value)$p.value) %>% 
+  mutate(shapiro_pval = formatC(shapiro_pval, format = "e", digits = 2)) %>%
+  knitr::kable()
+```
+
+
+En tots els casos, el p-valor associat al test de Shapiro-Wilk és inferior a 0.05, fet que ens porta a rebutjar la hipòtesi nul·la de normalitat de les dades. Això ens condueix a aplicar el test no paramètric de Spearman per avaluar el grau de dependència entre aquestes variables i la mortalitat per càncer. A continuació, realitzem un test de Spearman per cada variable versus la taxa de mortalitat per càncer, i apliquem la correcció de Benjamini-Hochberg per a comparacions múltiples.
+
+```{r warning=F, error=F, message=F}
+# Fem servir dplyr per avaluar la correlació entre la mortalitat i les variables
+# d'interès
+uscancer_clean_long %>%
+  group_by(variable) %>%
+  dplyr::summarise(spearman_pval = cor.test(value, mortality, 
+                                            method = "spearman")$p.value,
+                   spearman_r = cor.test(value, mortality, 
+                                         method = "spearman")$estimate) %>%
+  mutate(pval_adjusted = p.adjust(spearman_pval, method = "BH") ) %>% 
+  mutate(spearman_pval = formatC(spearman_pval, format = "e", digits = 2),
+         spearman_r = round(spearman_r, 2),
+         pval_adjusted = formatC(pval_adjusted, format = "e", digits = 2)) %>% 
+  knitr::kable()
+```
+
+
+Addicionalment, visualitzem aquestes correlacions mitjançant dotplots on hi afegim una recta de regressió seguint un model lineal (y ~ x).
+
+```{r warning=FALSE, message=FALSE}
+ggplot(uscancer_clean_long %>%
+         mutate(mortality = rep(mortality,9)),
+       aes(x=value,
+           y=mortality,
+           color=variable)) +
+  geom_point(alpha=0.2) +
+  geom_smooth(method="lm", color="black", se=FALSE) +
+  facet_wrap(~variable, scales = "free") +
+  theme_classic() +
+  theme(legend.position="none") +
+  labs(y = "Taxa de mortalitat ajustada per edat",
+       x = "Valors de variables d'interès")
+```
+
+
+Atenent als resultats anteriors, podem concloure que les variables *smokers*, *diabetics*, *insuf_sleep*, *obesity* i *rural_pop* presenten una correlació positiva significativa amb la taxa de mort per càcner ajustada per edat (p-valor<0.05). Considerant els coeficients de correlació de Spearman obtinguts (*spearman_r* a la taula anterior), observem que la variable *smokers* és la que presenta la correlació més forta i positiva amb *age_adj_deathrate* (r=0.65), seguida de *insuf_sleep* (r=0.48) i *diabetics* (r=0.47).
+
+Per contra, les variables *exercise*, *food_env_index* i *traffic_vol* presenten una correlació negativa significativa amb la mortalitat per càncer als comtats, encara que els seus coeficients de correlació indiquen que no són correlacions gaire fortes. A més, s'observa que l'overcrowding (quantitat de persones convivint en un mateix espai per sobre dels màxims recomanables) no correlaciona significativament amb la taxa de mortalitat per càncer (p-valor>0.05), fet que té sentit en no ser una malaltia infecciosa transmissible. 
+
+Val a dir que la majoria de resultats coincideixen amb allò esperat. Val a dir que, de nou, observem com el percentatge de població rural correlaciona positivament amb la taxa de mortalitat per càncer, mentre que el volum de trànsit correlaciona negativament. Això ens fa pensar que la variable *traffic_vol* podria estar directament correlacionada amb la presència de ciutats als comtats. 
+
+Al següent apartat ens interessaria utilitzar algunes de les variables sociodemogràfiques anteriors per a generar un model de regressió lineal múltiple amb *age_adj_deathrate* com a variable dependent. Amb aquest aobjectiu, decidim partir de les 8 variables que hem observat que correlacionen significativament amb *age_adj_deathrate*. Addicionalment, a continuació avaluem si algunes d'aquestes 8 variables correlacionen entre elles per tal de detectar i evitar un potencial problema de duplicació d’informació. 
+
+
+```{r}
+# Generem una matriu amb le svariables d'interès
+mx <- uscancer_clean_long %>%
+  mutate(id = rep(1:(nrow(.)/9),9)) %>%
+  spread(variable, value) %>%
+  select(-id) %>%
+  as.matrix()
+
+# Obtenim els coeicients de correlació i els p-valors i els representem
+# gràficament amb una matriu de correlacions
+corr.res = rcorr(mx, type = "spearman")
+corr.res$P[is.na(corr.res$P)] <- 0
+
+corrplot(corr.res$r,
+         method = "color",
+         type = 'lower',
+         addCoef.col = 'black',
+         p.mat=corr.res$P,
+         insig = "blank",
+         number.cex=.7,
+         tl.cex=.8)
+```
+
+
+De les correlacions entre les variables anteriors, destaquem que *exercise* correlaciona positivament i amb certa força amb *traffic_vol* i negativament amb *rural_pop*, *rural_pop* i *traffic_vol* correlacionen negativament i *smokers* correlaciona positivament amb *insuf_sleep*.
+
+Tenint això en compte, decidim generar un model de regressió lineal múltiple amb les variables *diabetics*, *smokers*, *food_env_index*, *obesity* i *rural_pop*.
+
+
+## 4.3 Model de regressió per a la mortalitat per càncer
+
+
+A continuació creem un model de regressió lineal múltple amb *diabetics*, *smokers*, *food_env_index*, *obesity* i *rural_pop* com a variables explicatives i *age_adj_deathrate* com a variable dependent.
+
+```{r}
+uscancer_rlm <- lm(age_adj_deathrate ~ diabetics + smokers +
+                     food_env_index + obesity + rural_pop, 
+                   data=uscancer_clean)
+summary(uscancer_rlm)
+```
+
+
+Observem que la fórmula de la recta de regressió de la taxa de mortalitat per càncer davant les variables *diabetics*, *smokers*, *food_env_index*, *obesity* i *rural_pop* és la següent:
+
+$$
+Y = -8.16 + 0.38X_{diabetics} + 2.33X_{smokers} + 1.02X_{food\_env\_index} + 0.16X_{obesity} + 0.04X_{rural\_pop}
+$$
+
+Tots els coeficients estimats són diferents de zero amb un p-valor < 0.05. Atenent al coeficient de determinació de 0.4485, podem dir que un 44.85% de la variància dels valors de la mostra és explicada per la recta de regressió. Per tant, es tracta d'un model relativament pobre i amb capacitat de millora, possiblement perquè les variables disponibles són només una part dels múltiples factors que determinen la incidència i mortalitat del càncer en cada comtat.
+
+D’altra banda, per determinar si hi ha col·linearitat entre les variables que composen el model, calculem el FIV (factor d’inflació de la variància).
+
+```{r}
+faraway::vif(uscancer_rlm)
+```
+
+Observem que els valors de FIV són [relativament baixos](http://www.sthda.com/english/articles/39-regression-model-diagnostics/160-multicollinearity-essentials-and-vif-in-r/) (propers a 1). Per tant, les variables introduïdes al model no serien redundants entre elles.
+
+A continuacó, com que la variable *insuf_sleep* és una de les que s'ha assoiat amb un coeficient de correlació de Spearman més elevat, ens interessaria avaluar un nou model de regressió lineal on s'introduís aquesta variable:
+
+```{r}
+uscancer_rlm2 <- lm(age_adj_deathrate ~ diabetics + smokers +
+                     food_env_index + obesity + rural_pop +
+                     insuf_sleep, 
+                   data=uscancer_clean)
+summary(uscancer_rlm2)
+```
+
+```{r}
+faraway::vif(uscancer_rlm2)
+```
+
+
+De nou, observem que tots els coeficients estimats són diferents de zero amb un p-valor < 0.05. Atenent al coeficient de determinació de 0.4554, podem dir que un 45.54% de la variància dels valors de la mostra és explicada per la recta de regressió. Es tracta d'un benefici marginal respecte el 44.85% de la variància explicada pel model sense la variable *insuf_sleep*. A banda, els valors de FIV segueixen sent relativament baixos, encara que la introducció de *insuf_sleep* ha fet augmentar el FIV de *smokers*, fet que podria indicar una certa col·linearitat (que ja intuíem per la correlació positiva trobada anteriorment entre les variables). 
+
+
+Finalment, realitzem una diagnosi del primer model de regressió múltiple creat mitjançant l'elaboració de dos gràfics: un amb els valors ajustats davant dels residus (que ens permetrà veure si la variància és constant) i un segon gràfic quantil-quantil que compara els residus del model amb els valors d’una variable que es distribueix normalment(QQ plot). 
+
+En primer lloc, el gràfic dels valors ajustats enfront dels residus permet veure l’adequació del model. En aquest cas, tal i com es veu al gràfic de sota, hi ha un patró aleatori força homogeni al voltant del residu 0, fet que indicaria que la variància seria constant i el model de regressió lineal múltiple podria ser adequat per a aquestes dades.
+
+
+```{r}
+plot(residuals(uscancer_rlm)~fitted.values(uscancer_rlm), main = "Diagrama de residus",
+xlab = "Valors estimats", ylab = "Residus")
+abline(0,0) #Generem una línia horitzontal en i=0
+```
+
+
+Seguidament, el Q-Q plot permet identificar que els quantils dels residus del model s’ajusten força als d’una distribució normal per als valors centrals, encara que els valors extrems tendeixen a desviar-se lleugerament d’aquest patró.
+
+```{r}
+qqnorm(residuals(uscancer_rlm))
+qqline(residuals(uscancer_rlm))
+```
+
+
+# 5. Representació dels resultats
+
+Les taules i gràfiques s'han aportat al llarg de la pràctica.
+
+# 6. Resolució del problema. Conclusions.
+
+Atenent als resultats obtinguts, podem afirmar que hem realitzat una anàlisi de l'impacte de certs factors sociodemogràfics sobre les taxes de mortalitat per càncer als Estats Units, partint de la informació associada a cada comtat del país. Concretament, podem concloure el següent respecte els 3 sub-objectius especificats a l'apartat 1:
+
+-   Els comtats amb una major proporció de població en entorns rurals presenten taxes de mortalitat per càncer més elevades.
+-   Les variables que correlacionen positivament amb la taxa de mortalitat per càncer als comtats són les proporcions de població fumadora, amb diabetis, amb obesitat, amb son insuficient i en entorns rurals. Per contra, s'ha observat una correlació negativa entre la mortalitat per càncer i les taxes de gent que s'exercita, que té un accés més fàcil a menjar saludable i el volum de trànsit dels comtats.
+-   S'ha generat un model de regressió lineal amb la mortalitat per càncer com a variable dependent i amb les variables explicatives de la proporció de diabètics,  fumadors, obesos, població rural i facilitat d'accés a menjar saludable. S'ha confirmat que totes les variables són significatives, encara que només un 44.85% de la variància en els valors de la mostra és explicada pel model.
+
+En general, observem que bona part de les variables sociodemogràfiques estudiades tenen una associació amb la mortalitat per càncer als comtats. Tot i així, possiblement calgui tenir en compte altres factors (com ara factors genètics, o variables sociodemogràfiques addicionals) per generar un model amb un millor rendiment. 
