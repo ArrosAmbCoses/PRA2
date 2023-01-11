@@ -402,7 +402,7 @@ t.test(urban$age_adj_deathrate,
 ```
 
 
-Amb una confiança del 95% podem rebutjar la hipòtesi nul·la i concloure que la mitjana del ràtio de mortalitat en entorns rurals és major que la mitjana als entorns urbans És a dir:  y(rural) > y(urban). Extraiem aquesta conclusió perquè el p-valor és menor que la significància escollida, 0.05, i per tant s'ha de descartar l'hipòtesi nul·la i acceptar l'alternativa. Observant els valors de les mitjanes i el boxplot anterior, concloem que els comtats rurals tenen valors de mortalitat per càncer superiors als urbans.
+Amb una confiança del 95% podem rebutjar la hipòtesi nul·la i concloure que la mitjana del ràtio de mortalitat en entorns urbans és diferent a la mitjan dels entorns rurals. És a dir:  y(urban) != y(rural). Extraiem aquesta conclusió perquè el p-valor és menor que la significància escollida, 0.05, i per tant s'ha de descartar l'hipòtesi nul·la i acceptar l'alternativa. Observant els valors de les mitjanes i el boxplot anterior, concloem que els comtats rurals tenen valors de mortalitat per càncer superiors als urbans.
 
 Cal destacar que aquest resultat seria contrari a allò que sospitàvem inicialment, fet que ens condueix a pensar que altres factors podrien emmascarar l'impacte ambiental de les ciutats sobre la mortalitat per càncer: algun d'aquests factors (que no hem avaluat aquí per no tenir-ne les dades) podria ser la diferència en el nivell econòmic entre comtats o la facilitat d'accés a centres hospitalaris.
 
