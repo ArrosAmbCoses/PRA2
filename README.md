@@ -6,8 +6,8 @@ Grup format per:
 * Roger Esteban Fabró
 
 Carpetes:
-* /CSVs Originals: aquesta carpeta guarda les dades baixades directament dels links de kaggle. Conté 3 datasets.
-* /source: carpeta on es guarda el codi per fer l'anàlisi
+* /CSVs Originals: en aquesta carpeta es guarden les dades baixades directament dels links de kaggle. Conté 3 datasets.
+* /source: en aquesta carpeta es on guarda el codi per fer l'anàlisi
 
 Arxius:
 * covid_county_population_usafacts.csv: dataset amb la població de cada comtat dels EUA
